@@ -1,0 +1,12 @@
+# Cloned repos for analysis (large, temporary)
+refs/
+
+# OS files
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+
+# Claude internals
+.claude/
