@@ -47,21 +47,31 @@
 
 | Aspect | Assessment |
 |--------|------------|
-| **Stars/Activity** | 20,900 stars, 2,200 forks, 3,131 commits, 83 releases |
-| **Language** | TypeScript 96.6%, JavaScript 2.1%, MIT license |
-| **Architecture** | 7-package monorepo: `pi-ai` (LLM API), `pi-agent-core` (runtime), `pi-coding-agent` (CLI), `pi-mom` (Slack bot), `pi-tui`, `pi-web-ui`, `pi-pods` (vLLM) |
-| **Core size** | Lightweight — designed as toolkit, not monolithic gateway |
-| **Modes** | **4 modes: Interactive, Print/JSON, RPC (stdin/stdout), SDK (embed in your app)** |
-| **Skills** | SKILL.md following AgentSkills spec (same format as OpenClaw). `/skill:name` invocation or auto-matching |
+| **Stars/Activity** | 20,900 stars, 2,200 forks, 3,131 commits, 83 releases. Very aggressive release cadence |
+| **Creator** | Mario Zechner (badlogic) — creator of libGDX game framework. Solo maintainer origin, community forks exist (oh-my-pi) |
+| **Language** | TypeScript 96.6%, JavaScript 2.1%, MIT license. Strict TS — no `any` types |
+| **Architecture** | Layered monorepo: `pi-ai` (LLM API) → `pi-agent-core` (agent loop) → `pi-coding-agent` (CLI). **NotoNote only needs the first two layers.** Other packages: `pi-mom` (Slack), `pi-tui`, `pi-web-ui`, `pi-pods` (vLLM) |
+| **Core philosophy** | 4 built-in tools (read/write/edit/bash), system prompt <1,000 tokens. No sub-agents, no plan mode. "If the agent can write and run code, it should extend itself" |
+| **Modes** | **4 modes: Interactive, Print/JSON, RPC (stdin/stdout), SDK (`createAgentSession()`)** |
+| **Skills** | SKILL.md following AgentSkills spec (same format as OpenClaw). `/skill:name` invocation or auto-matching. Compatible with Claude's skills directory convention |
+| **Skill discovery** | Global (`~/.pi/agent/skills/`, `~/.agents/skills/`), Project (`.pi/skills/`), Packages (`pi.skills` in package.json), Settings, CLI flags |
 | **Multi-tenant** | No built-in multi-tenant — but SDK mode means you control isolation |
-| **SDK/Embed** | **Yes — SDK mode for embedding in other applications. RPC mode for process integration.** This is the key differentiator |
-| **LLM support** | Unified API: OpenAI, Anthropic, Google, + any OpenAI-compatible (Ollama, vLLM, LM Studio). Only models with tool calling |
-| **Extensions** | TypeScript modules: lifecycle hooks, custom tools, commands. Can override built-in tools |
-| **Security** | "Pi packages run with full system access" — honest about the trust model but no security scanning |
+| **SDK/Embed** | **`createAgentSession()` — the exact API OpenClaw uses internally.** Serializable contexts enable mid-session provider handoffs. TypeBox schema-based tools for type-safe function calling |
+| **LLM support** | **18+ providers** via unified API: OpenAI, Anthropic, Google, Vertex, Mistral, Groq, Cerebras, xAI, OpenRouter, Bedrock, GitHub Copilot, + any OpenAI-compatible. Mid-session model switching. Only tool-calling models |
+| **Sessions** | JSONL files with tree structure (id + parentId). In-place branching, rewind, fork. Context compaction for long conversations |
+| **Extensions** | TypeScript modules: lifecycle hooks, custom tools, commands. Can override built-in tools (with warning) |
+| **Security** | "Pi packages run with full system access" — honest trust-based model, no security scanning |
 | **License** | MIT |
 
-**Strengths for NotoNote:** Embeddable SDK mode, lightweight, unified LLM API, same skill format as OpenClaw, RPC mode for process integration, much smaller codebase to understand/maintain.
-**Weaknesses for NotoNote:** Smaller ecosystem, no built-in multi-tenant, less battle-tested at extreme scale.
+**Strengths for NotoNote:** Embeddable via `createAgentSession()` (same API OpenClaw uses), lightweight layered architecture (only import what you need), unified 18+ LLM API with mid-session switching, same skill format as OpenClaw, serializable contexts, TypeBox type-safe tools.
+**Weaknesses for NotoNote:** Smaller ecosystem than ClawHub, no built-in multi-tenant, solo maintainer risk (mitigated by MIT license + forks), less battle-tested at extreme scale.
+
+**How OpenClaw uses Pi (confirmed pattern for NotoNote to follow):**
+- OpenClaw imports `createAgentSession()` from Pi's SDK
+- Pi handles: LLM communication, tool calling, context management, conversation loop
+- OpenClaw handles: channel routing, session persistence, memory, skill discovery, sandboxing
+- OpenClaw replaces Pi's `bash` tool with its own `exec/process` tools for sandboxing
+- An adapter (`pi-tool-definition-adapter.ts`) bridges tool interfaces
 
 ### Comparison Matrix
 
@@ -232,26 +242,31 @@ interface VettedNote {
 
 #### 2. Noto Agent (Pi Mono SDK embedded)
 ```typescript
-import { createAgent } from '@mariozechner/pi-agent-core';
+// This mirrors how OpenClaw embeds Pi — the proven integration pattern
+import { createAgentSession } from '@mariozechner/pi-agent-core';
 import { createLLMClient } from '@mariozechner/pi-ai';
 
-// Embed Pi's agent in NotoNote's process
-const agent = createAgent({
+// Create LLM client (unified API — same call for Claude, GPT, Gemini, etc.)
+const llm = createLLMClient({
+  provider: 'anthropic',
   model: 'claude-sonnet-4-6',  // or claude-opus-4-6 for complex tasks
-  tools: [
-    ...notoNoteCustomTools,      // create_action, search_notes, etc.
-    ...loadedClawHubSkills,      // Parsed SKILL.md → tool definitions
-    ...mcpTools,                 // Connected MCP server tools
-  ],
-  systemPrompt: buildNotoPrompt(context),
-  outputFormat: 'json',         // Enforce structured output
 });
 
-// Run a conversation turn
-const result = await agent.run(userMessage, {
-  maxTurns: 10,                 // Support 5-10 turn context loops
-  contextWindow: 'compact',     // Auto-compact long conversations
+// Create agent session — same API OpenClaw uses internally
+const session = await createAgentSession({
+  llm,
+  tools: [
+    ...notoNoteCustomTools,      // create_action, search_notes, etc.
+    // TypeBox schema-based tools for type-safe function calling
+  ],
+  systemPrompt: buildNotoPrompt(context),
 });
+
+// Run a conversation turn (context is serializable — can switch LLM mid-session)
+const result = await session.run(userMessage);
+
+// Sessions stored as JSONL with tree structure — supports branching/rewind
+// Context compaction built-in for long conversations (5-10 turn loops)
 ```
 
 #### 3. ClawHub Skill Loader
@@ -490,6 +505,13 @@ NotoNote Backend (K8s)
 - [Pi Extensions Documentation](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/extensions.md)
 - [Pi Models Documentation](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/models.md)
 - [Pi SDK Documentation](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/sdk.md)
+- [AGENTS.md (coding standards)](https://github.com/badlogic/pi-mono/blob/main/AGENTS.md)
+- [Pi Releases](https://github.com/badlogic/pi-mono/releases)
+- [Pi: The Minimal Agent Inside OpenClaw](https://akillness.github.io/posts/pi-minimal-agent/)
+- [How to Build a Custom Agent Framework with Pi (Nader Dabit)](https://nader.substack.com/p/how-to-build-a-custom-agent-framework)
+- [OpenClaw Architecture Lessons (Agentailor)](https://blog.agentailor.com/posts/openclaw-architecture-lessons-for-agent-builders)
+- [oh-my-pi Fork](https://github.com/can1357/oh-my-pi)
+- [Pi Mono on Hacker News](https://news.ycombinator.com/item?id=46629341)
 
 ### MCP (Model Context Protocol)
 - [MCP Official Registry](https://registry.modelcontextprotocol.io/)
