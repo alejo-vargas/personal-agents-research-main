@@ -92,17 +92,27 @@
 
 ## Skills Ecosystem Analysis (MVP Priority)
 
-### 1. OpenClaw/ClawHub Skills — PRIMARY
+### CRITICAL FINDING: The Universal Bridge Already Exists
 
-- **Format:** SKILL.md with YAML frontmatter + markdown body
-- **Count:** 13,729+ skills on ClawHub registry
-- **Discovery:** Vector search (embeddings), not just keywords
-- **Security:** VirusTotal scanning, SHA-256 hashing, Gemini-powered code analysis
-- **How they work:** Agent matches request → reads SKILL.md instructions → follows them using tools (bash, read, write, etc.)
-- **Key insight:** Skills are just markdown instructions + optional scripts. **No SDK dependency.** Any agent that can read a SKILL.md and follow instructions can use them.
+**The industry converged faster than expected.** Two standards won:
+1. **Agent Skills (SKILL.md)** — open standard (Dec 2025). A SKILL.md file works unchanged across **30+ agent platforms**: Claude Code, Codex CLI, Cursor, GitHub Copilot, Gemini, and more.
+2. **MCP (Model Context Protocol)** — open protocol for tool connectivity. 10,000+ servers. Donated to Linux Foundation's Agentic AI Foundation (AAIF) in Dec 2025, co-founded by Anthropic, Block, and OpenAI.
+
+**NotoNote doesn't need to build custom bridges.** The SKILL.md format IS the bridge. MCP IS the tool protocol. Just consume them.
+
+**skills.sh** (by Vercel, launched Jan 2026) is the **"npm for agent skills"** — universal registry with CLI (`npx skills add/find`), supports 37+ agent platforms, Snyk security scanning. Top skill hit 20K installs within 6 hours of launch.
+
+### 1. Agent Skills / SKILL.md — THE STANDARD (MVP)
+
+- **Format:** SKILL.md with YAML frontmatter + markdown body (open standard since Dec 2025)
+- **Portability:** Works across Claude Code, Codex CLI, Cursor, GitHub Copilot, Gemini, and 30+ platforms **unchanged**
+- **Registries:** ClawHub (13,729+ skills), skills.sh (Vercel, universal), github.com/openai/skills (curated)
+- **Discovery:** Progressive disclosure — agent loads name+description at startup, full SKILL.md only when needed (~24 tokens/skill metadata)
+- **Security:** skills.sh uses Snyk scanning. ClawHub uses VirusTotal + SHA-256 + Gemini code analysis
+- **How they work:** Agent matches request → reads SKILL.md instructions → follows them using tools. No SDK, no runtime — just markdown.
 
 ```yaml
-# Example SKILL.md frontmatter
+# Example SKILL.md (works on Claude, Codex, Cursor, Copilot, etc.)
 ---
 name: todoist-manager
 description: Manage tasks via the Todoist API
@@ -124,24 +134,19 @@ When the user asks to manage Todoist tasks...
 3. Present results in a structured format
 ```
 
-**Bridge feasibility: HIGH.** Since skills are just structured markdown, Noto can:
-1. Download skills from ClawHub via its API
-2. Parse YAML frontmatter for requirements/metadata
-3. Inject the markdown instructions into the agent's context
-4. Let Claude follow the instructions naturally
+**Bridge feasibility: SOLVED.** The format IS the bridge. Pi Mono already supports SKILL.md natively. ClawHub skills, skills.sh skills, and Codex skills all use the same format. No conversion needed.
 
-No runtime bridge needed — it's a content injection pattern.
+### 2. MCP (Model Context Protocol) — THE PROTOCOL (MVP)
 
-### 2. Claude Tools / MCP — PRIMARY
-
-- **Format:** JSON Schema tool definitions (name, description, input_schema)
-- **Count:** 18,000+ MCP servers tracked (MCP.so), 8,590+ on PulseMCP
-- **Protocol:** JSON-RPC over stdio or SSE (Server-Sent Events)
-- **Registry:** Official MCP Registry (registry.modelcontextprotocol.io) — in preview
-- **How they work:** Client connects to MCP server → discovers available tools → sends tool calls → receives results
+- **Format:** JSON-RPC 2.0 over STDIO or HTTP/SSE
+- **Count:** 10,000+ public servers (MCP.so tracks 18,000+)
+- **Governance:** Linux Foundation's Agentic AI Foundation (Anthropic + Block + OpenAI + Google + Microsoft + AWS)
+- **Adoption:** Claude, ChatGPT, Cursor, Gemini, VS Code, GitHub Copilot, CrewAI, LangChain
+- **SDK downloads:** 97M+ monthly (Python + TypeScript)
+- **Claude specifics:** 75+ official connectors in Claude's directory
 
 ```typescript
-// Claude tool definition format
+// MCP tool definition (JSON Schema — same format Claude tools use)
 {
   name: "create_action_item",
   description: "Create a new action item from meeting notes",
@@ -157,18 +162,35 @@ No runtime bridge needed — it's a content injection pattern.
 }
 ```
 
-**Bridge feasibility: NATIVE.** Claude's API already supports tool calling. MCP servers expose tools in this exact format. Pi Mono's unified LLM API supports tool calling. This is the most natural integration path.
+**Bridge feasibility: NATIVE.** Claude's API uses the same JSON Schema format. Pi Mono's unified LLM API supports tool calling. MCP servers expose tools in this exact format. This is the natural integration path.
 
-### 3. Codex CLI — STRETCH GOAL
+### 3. Claude Advanced Tools — ENHANCEMENT
 
-- **What it is:** OpenAI's terminal-based coding agent
-- **Skills:** Uses `instructions.md` files (similar concept to SKILL.md)
-- **Bridge feasibility:** Medium — similar markdown-instruction pattern, but Codex is tightly coupled to OpenAI models
+Recent additions (late 2025) that Noto should leverage:
+- **Tool Search Tool:** Dynamic tool discovery instead of loading all upfront. 85% reduction in token usage
+- **Programmatic Tool Calling:** Tools invoked inside code execution environment, keeping results out of main context
+- **Computer Use:** Beta — Claude controls a containerized desktop via screenshots + mouse/keyboard actions (Opus 4.6, Sonnet 4.6)
 
-### 4. CrewAI / LangGraph — STRETCH GOAL
+### 4. Codex CLI — FREE (same standard)
 
-- **Format:** Python classes (CrewAI), Python functions (LangGraph)
-- **Bridge feasibility:** Low for direct integration — different runtime (Python). Better to expose them as MCP servers and consume via MCP.
+- **Uses the same SKILL.md format** — OpenAI adopted it within 48 hours of Anthropic's open standard announcement
+- **Skills:** Read from `.agents/skills/`, user-level, admin-level directories
+- **Installation:** `npx skills add` (skills.sh) or `$skill-installer`
+- **No bridge needed** — same format as everything else
+
+### 5. CrewAI / LangGraph — VIA MCP
+
+- **Format:** Python BaseTool classes (CrewAI), @tool decorated functions (LangGraph)
+- **Both have first-class MCP support** — CrewAI via `pip install crewai-tools[mcp]`, LangChain via `langchain-mcp`
+- **Bridge path:** Expose Python tools as MCP servers → Noto consumes via MCP client. No Python runtime needed in Noto.
+- **LangChain scale:** 1,000+ integrations, 70M+ monthly downloads, $1.25B valuation
+
+### 6. Composio — OPTIONAL ACCELERATOR
+
+- **What:** 850+ pre-built connectors, works with 25+ agent frameworks
+- **Handles:** OAuth, API keys, auth centrally — the "OS layer" between agents and tools
+- **Bridge path:** Composio connectors → exposed as MCP servers → Noto consumes
+- **When to use:** If Noto needs rapid integration with enterprise tools (Salesforce, Slack, Jira, etc.) without building each connector
 
 ---
 
@@ -425,18 +447,28 @@ NotoNote Backend (K8s)
    (13,700+ skills)     (18,000+ tools)
 ```
 
-### Future Expansion
+### Why No Custom Bridge Is Needed
+
+The industry converged on two standards in late 2025:
+
+| Layer | Standard | What It Does | Noto's Role |
+|-------|----------|-------------|-------------|
+| **Behavior** | Agent Skills (SKILL.md) | Portable agent instructions | Consume natively (Pi supports it) |
+| **Protocol** | MCP (JSON-RPC 2.0) | Tool discovery + invocation | Connect as MCP client |
+| **Registry** | skills.sh + ClawHub | Discover + install skills | Pull from both |
+| **API description** | OpenAPI | Describe HTTP endpoints | Auto-convert to MCP via Gentoro/Google ADK |
 
 | Ecosystem | Bridge Method | Effort |
 |-----------|--------------|--------|
-| ClawHub (OpenClaw) | Parse SKILL.md → context injection | **Low** (same format as Pi skills) |
-| MCP servers | MCP client → tool registration | **Low** (standard protocol) |
-| Codex CLI | Parse instructions.md → context injection | Medium (similar pattern) |
-| CrewAI tools | Wrap as MCP server | Medium (Python→MCP bridge) |
-| LangGraph | Wrap as MCP server | Medium (Python→MCP bridge) |
-| Custom frameworks | OpenAPI spec → tool definition | Low-Medium |
+| ClawHub (13,700+ skills) | **Native** — same SKILL.md format | **Zero** |
+| skills.sh (Vercel registry) | `npx skills add` → same SKILL.md | **Zero** |
+| Codex CLI skills | **Native** — same SKILL.md format (adopted within 48hrs) | **Zero** |
+| MCP servers (10,000+) | MCP client → tool registration | **Low** (standard protocol) |
+| CrewAI/LangGraph tools | Already expose via MCP (`crewai-tools[mcp]`) | **Low** (consume MCP) |
+| Any REST API | OpenAPI spec → MCP server (Gentoro, Google ADK) | **Low** |
+| Composio (850+ connectors) | Composio → MCP server exposure | **Low** |
 
-**Key insight:** MCP is the universal bridge. Any ecosystem that can be wrapped as an MCP server becomes consumable by Noto. ClawHub skills don't even need a bridge — they're just markdown that any agent can follow.
+**Key insight:** The "USB-C moment" for agent skills already happened. Noto just plugs in.
 
 ---
 
@@ -444,11 +476,12 @@ NotoNote Backend (K8s)
 
 | Risk | Likelihood | Mitigation |
 |------|-----------|------------|
-| ClawHub malware in skills | **High** (already happened) | Only allow whitelisted skills. Run in sandboxed environment. Don't auto-install |
+| Malicious skills (ClawHub/skills.sh) | **High** (ClawHavoc already happened) | Only allow whitelisted skills. Use skills.sh (Snyk-scanned) over raw ClawHub. Run in sandboxed environment |
 | Pi Mono breaking changes | Medium | Pin versions. Fork if necessary (MIT license, small codebase) |
-| Claude API cost spikes | Medium | Use Sonnet for routine, Opus for complex. Token budgets per user |
-| Pi Mono project abandonment | Low (20.9k stars, active) | MIT license, can fork. Small enough to maintain |
-| MCP protocol instability | Low (backed by Anthropic) | Registry still in preview, but protocol is stabilizing |
+| Claude API cost spikes | Medium | Use Sonnet for routine, Opus for complex. Token budgets per user. Mid-session model switching via Pi |
+| Pi Mono project abandonment | Low (20.9k stars, active) | MIT license, can fork. oh-my-pi fork exists. Small enough to maintain |
+| MCP protocol instability | **Low** (Linux Foundation governance, Anthropic + OpenAI + Google backing) | Protocol is stabilizing, v0.1 API frozen |
+| Skills standard fragmentation | **Very Low** | Already adopted by 30+ platforms in <3 months. This ship has sailed |
 
 ---
 
@@ -461,16 +494,17 @@ NotoNote Backend (K8s)
 - Context controller: selective note sharing with stable IDs
 - Output enforcer: validate JSON action item format
 
-### Phase 2: ClawHub Skills (Week 3)
-- Build ClawHub SKILL.md parser (YAML frontmatter + markdown body)
-- Skill whitelist system (curated list of safe, useful skills)
-- Context injection: parsed skill instructions → agent system prompt
-- Test with 5-10 high-value skills (calendar, task management, summarization)
+### Phase 2: Skills Ecosystem (Week 3)
+- Pi already supports SKILL.md natively — configure skill discovery paths
+- Install curated skills via `npx skills add` (skills.sh, Snyk-scanned)
+- Skill whitelist system (only approved skills per tenant)
+- Test with 5-10 high-value skills from skills.sh + ClawHub (calendar, task management, summarization)
 
 ### Phase 3: MCP Integration (Week 4)
 - MCP client for connecting to external tool servers
-- Start with 2-3 MCP servers (filesystem, web search, Slack/email)
+- Start with 2-3 MCP servers (web search, Slack/email, calendar)
 - Tool registration: MCP tools → Pi agent tool definitions
+- Leverage Claude's Tool Search Tool for dynamic tool discovery (85% token savings)
 
 ### Phase 4: Multi-Tenant & Scale (Week 5-6)
 - Horizontal pod scaling for agent workers
@@ -520,7 +554,34 @@ NotoNote Backend (K8s)
 - [PulseMCP (8,590+ servers)](https://www.pulsemcp.com/servers)
 - [MCP Registry Blog Post](http://blog.modelcontextprotocol.io/posts/2025-09-08-mcp-registry-preview/)
 
+### Agent Skills Open Standard
+- [Agent Skills Standard Announcement (Anthropic)](https://opentools.ai/news/anthropic-introduces-agent-skills-as-open-ai-standard-a-new-era-of-cross-platform-portability)
+- [Standard Adopted in 48 Hours (Microsoft + OpenAI)](https://byteiota.com/agent-skills-standard-microsoft-openai-adopt-in-48-hours/)
+- [skills.sh — Vercel Universal Skills Registry](https://vercel.com/changelog/introducing-skills-the-open-agent-skills-ecosystem)
+- [skills.sh Analysis (InfoQ)](https://www.infoq.com/news/2026/02/vercel-agent-skills/)
+- [Snyk + Vercel Skills Security](https://snyk.io/blog/snyk-vercel-securing-agent-skill-ecosystem/)
+- [Claude Skills Deep Dive](https://leehanchung.github.io/blogs/2025/10/26/claude-skills-deep-dive/)
+- [Skills Explained — Claude Blog](https://claude.com/blog/skills-explained)
+
+### Claude Tools & Advanced Features
+- [Anthropic Advanced Tool Use](https://www.anthropic.com/engineering/advanced-tool-use)
+- [Claude Programmatic Tool Calling](https://platform.claude.com/docs/en/agents-and-tools/tool-use/programmatic-tool-calling)
+- [Claude Computer Use Tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool)
+
+### Codex CLI
+- [OpenAI Codex Skills Developer Docs](https://developers.openai.com/codex/skills/)
+- [OpenAI Skills GitHub](https://github.com/openai/skills)
+- [Simon Willison on OpenAI Adopting Skills](https://simonwillison.net/2025/Dec/12/openai-skills/)
+
+### Other Ecosystems
+- [CrewAI Custom Tools](https://docs.crewai.com/en/learn/create-custom-tools)
+- [LangChain](https://www.langchain.com/langchain)
+- [Composio Platform (850+ connectors)](https://composio.dev/)
+- [Anthropic Donates MCP to Linux Foundation AAIF](https://www.anthropic.com/news/donating-the-model-context-protocol-and-establishing-of-the-agentic-ai-foundation)
+- [A Year of MCP Review](https://www.pento.ai/blog/a-year-of-mcp-2025-review)
+
 ### Skills Ecosystem (General)
 - [OpenClaw Skills Guide (DigitalOcean)](https://www.digitalocean.com/resources/articles/what-are-openclaw-skills)
 - [Best ClawHub Skills (DataCamp)](https://www.datacamp.com/blog/best-clawhub-skills)
 - [OpenClaw Plugin SDK Deep Dive](https://dev.to/wonderlab/openclaw-deep-dive-4-plugin-sdk-and-extension-development-51ki)
+- [Agent Skills as Enterprise Standard](https://subramanya.ai/2025/12/18/agent-skills-the-missing-piece-of-the-enterprise-ai-puzzle/)
