@@ -1,15 +1,15 @@
-# NotoNote Agent Architecture: Research & Recommendation
+# Noto Agent Platform: Research & Recommendation
 
 **Date:** 2026-03-07
 **Status:** Deep Dive
-**MVP Focus:** Claude tools + OpenClaw/ClawHub skills
-**Design Principle:** Noto = the ONE orchestrator that manages outside agents. Simplicity over hype.
+**MVP Focus:** Spawn the right skill-agent for a task (single-agent). Multi-agent collaboration is post-MVP.
+**Design Principle:** Noto = personal agent platform. Note-taking is one skill (and a key data source), not the whole product. Noto is the "boss" that selects, spawns, and supervises skill-agents.
 
 ---
 
 ## TL;DR Recommendation
 
-**Use Pi Mono as the agent base.** It's embeddable (SDK/RPC mode), lightweight, and supports the same SKILL.md format as OpenClaw — meaning you get access to 13,700+ ClawHub skills without needing OpenClaw's heavy Gateway. Add MCP for Claude tools and external integrations. Noto becomes a thin orchestrator that delegates to skills and external agents while maintaining strict context control.
+**Use Pi Mono as the agent base.** It's embeddable (SDK/RPC mode), lightweight, and supports the same SKILL.md format as OpenClaw — meaning you get access to 13,700+ ClawHub skills without needing OpenClaw's heavy Gateway. Add MCP for Claude tools and external integrations. Noto becomes a personal agent platform that selects the right skill-agent for each task, spawns it with the right context, and captures the result. Notes are a first-class data source that informs agent decisions across all skills.
 
 **Critical finding:** OpenClaw's core agent engine IS Pi Mono. Pi is literally the brain underneath OpenClaw's Gateway. Using Pi Mono directly means you get the same agent engine without the Gateway overhead.
 
@@ -196,24 +196,26 @@ Recent additions (late 2025) that Noto should leverage:
 
 ## Recommended Architecture
 
-### Core Principle: Noto = Thin Orchestrator on Pi Mono Base
+### Core Principle: Noto = Personal Agent Platform on Pi Mono Base
 
-Noto doesn't try to BE a full agent framework. It uses Pi Mono's SDK as the engine and adds three things:
-1. **Context controller** — decides what NotoNote data the agent sees
-2. **Skills router** — loads ClawHub skills + MCP tools on demand
-3. **Output enforcer** — ensures structured JSON output (action items)
+Noto is a personal agent that manages skills and agents on behalf of the user. Note-taking is one skill (already built) and a rich data source that informs all other skills. Noto uses Pi Mono's SDK as the engine and adds four things:
+1. **Skill selector** — given user intent + context, picks the right skill-agent to spawn
+2. **Context controller** — decides what user data (notes, history, preferences) each skill-agent sees
+3. **Skills router** — loads ClawHub skills + MCP tools on demand
+4. **Output enforcer** — captures structured results from skill-agents
 
 ### Architecture Diagram
 
 ```mermaid
 graph TB
-    subgraph "NotoNote Desktop App"
-        UI[Note-Taking UI]
-        CTX[Context Controller<br/>Selective sharing: vetted notes + stable IDs<br/>Never raw docs/email/calendar]
-        OUT[Output Parser<br/>Structured JSON → Action Items<br/>id, desc, due, note_id]
+    subgraph "Noto Platform"
+        UI[User Interface]
+        SEL[Skill Selector<br/>Intent classification → pick skill-agent]
+        CTX[Context Controller<br/>Selective data sharing per skill-agent<br/>Notes as primary data source]
+        OUT[Output Capture<br/>Structured results from skill-agents]
     end
 
-    subgraph "Noto Agent (Pi Mono SDK)"
+    subgraph "Noto Agent Runtime (Pi Mono SDK)"
         CORE[Pi Agent Core<br/>Tool calling, state, context compaction]
         LLM[Pi Unified LLM API<br/>Claude primary, fallback to others]
 
@@ -230,7 +232,8 @@ graph TB
         CLAUDE[Claude API<br/>Primary LLM]
     end
 
-    UI -->|"Vetted context"| CTX
+    UI -->|"User intent"| SEL
+    SEL -->|"Selected skill + params"| CTX
     CTX -->|"Filtered notes + IDs"| CORE
     CORE --> LLM
     LLM -->|"API calls"| CLAUDE
@@ -245,14 +248,21 @@ graph TB
 
 ### Component Breakdown
 
-#### 1. Context Controller (NotoNote side)
+#### 1. Skill Selector + Context Controller (Noto Platform side)
 ```typescript
-// NotoNote decides what the agent sees
+// Noto decides WHICH skill-agent to spawn and WHAT data it sees
+interface SkillSelection {
+  skill: SkillDef;            // Which skill-agent to spawn
+  context: AgentContext;      // What data it gets
+  rules: AgentRules;          // Constraints (token budget, permissions, timeout)
+}
+
 interface AgentContext {
-  notes: VettedNote[];        // Full content of relevant notes
+  notes: VettedNote[];        // Notes relevant to this task (primary data source)
   noteIds: string[];          // Stable IDs for back-references
+  userPreferences: Prefs;     // User settings relevant to this skill
   sessionHistory: Turn[];     // Previous turns in this conversation
-  // NEVER: raw desktop docs, email, calendar, file system
+  taskDescription: string;    // What the user wants done
 }
 
 interface VettedNote {
@@ -262,7 +272,7 @@ interface VettedNote {
 }
 ```
 
-#### 2. Noto Agent (Pi Mono SDK embedded)
+#### 2. Noto Agent Runtime (Pi Mono SDK embedded)
 ```typescript
 // This mirrors how OpenClaw embeds Pi — the proven integration pattern
 import { createAgentSession } from '@mariozechner/pi-agent-core';
@@ -485,14 +495,71 @@ The industry converged on two standards in late 2025:
 
 ---
 
-## Implementation Roadmap (MVP)
+## Post-MVP: Multi-Agent Collaboration
 
-### Phase 1: Core Agent (Week 1-2)
-- Embed Pi Mono SDK in NotoNote backend
+### Vision: Noto as the Boss, Not the Bottleneck
+
+MVP is single skill-agent spawning: Noto picks the right agent, gives it context, gets a result. Post-MVP, Noto can spawn **multiple** skill-agents for a task and let them communicate directly — with Noto acting as the boss and tie-breaker, not routing every message.
+
+**Key distinction:** Noto doesn't sit in the middle of every agent-to-agent message. It sets up the "meeting," defines the rules, and intervenes when needed.
+
+### Communication Model
+
+```
+Noto (Boss)
+├── Spawns Agent-A (skill: research)
+├── Spawns Agent-B (skill: calendar)
+├── Spawns Agent-C (skill: drafting)
+│
+├── Sets rules: who talks to whom, permissions, token budget, termination criteria
+├── Opens communication channel between agents
+├── Monitors progress, breaks ties, approves final output
+│
+└── Agents communicate directly within the channel (not through Noto)
+```
+
+### Reference Implementations
+
+Two open-source projects validate this pattern:
+
+**[agentchattr](https://github.com/bcurts/agentchattr)** — Lightweight chat-room model
+- Agents @mention each other in a shared channel, MCP handles transport
+- Loop guard prevents runaway conversations (configurable hop limit, human `/continue` to resume)
+- SQLite-backed, Flask server, runs locally
+- Good fit for: simple multi-agent tasks where agents take turns
+
+**[AI Maestro](https://github.com/23blocks-OS/ai-maestro)** — Heavier peer mesh
+- Agent Messaging Protocol (AMP): email-like messages with priority, cryptographic signatures, push notifications
+- Peer mesh network (no central server), cross-machine agent teams
+- Kanban boards, persistent memory, code graph visualization
+- Good fit for: complex multi-agent orchestration at scale
+
+### Noto's Approach (Post-MVP)
+
+Noto would likely use a **lightweight channel model** (closer to agentchattr) rather than full mesh:
+1. Noto creates a task context and spawns N skill-agents
+2. Noto opens a shared channel with rules (permissions, ordering, token budget, termination)
+3. Agents communicate directly via the channel using structured messages
+4. Noto monitors and can intervene (override, redirect, terminate)
+5. When agents reach consensus or hit a rule boundary, Noto captures the final output
+
+**This layer plugs in on top of the same Pi Mono spawn mechanism used in MVP.** The skill-agent sessions are the execution units; the communication protocol is the coordination layer above them.
+
+---
+
+## Implementation Roadmap
+
+### MVP Goal: Noto spawns the right single skill-agent for a task
+
+The critical path is skill selection → context handoff → result capture. Multi-agent collaboration comes later.
+
+### Phase 1: Core Agent Runtime (Week 1-2)
+- Embed Pi Mono SDK in Noto backend
 - Wire up Claude as primary LLM
-- Implement 3 custom NotoNote tools: `create_action`, `search_notes`, `update_action`
-- Context controller: selective note sharing with stable IDs
-- Output enforcer: validate JSON action item format
+- Implement core Noto tools: `search_notes`, `create_action`, `update_action`
+- **Skill selector:** given user intent + note context, pick which skill-agent to spawn
+- Context controller: selective data sharing per skill-agent (notes as primary data source)
+- Output capture: structured results from skill-agents
 
 ### Phase 2: Skills Ecosystem (Week 3)
 - Pi already supports SKILL.md natively — configure skill discovery paths
@@ -511,6 +578,12 @@ The industry converged on two standards in late 2025:
 - Session state externalization (Redis/PostgreSQL)
 - Skills cache (parsed SKILL.md + MCP connections)
 - Rate limiting and cost tracking per user
+
+### Phase 5: Multi-Agent Collaboration (Post-MVP)
+- Implement lightweight agent communication channel (agentchattr-style)
+- Rules engine: permissions, token budgets, turn ordering, termination criteria
+- Noto as boss: monitor, intervene, break ties
+- Test with 2-3 agent collaborative scenarios (e.g., research + draft + schedule)
 
 ---
 
@@ -579,6 +652,10 @@ The industry converged on two standards in late 2025:
 - [Composio Platform (850+ connectors)](https://composio.dev/)
 - [Anthropic Donates MCP to Linux Foundation AAIF](https://www.anthropic.com/news/donating-the-model-context-protocol-and-establishing-of-the-agentic-ai-foundation)
 - [A Year of MCP Review](https://www.pento.ai/blog/a-year-of-mcp-2025-review)
+
+### Multi-Agent Communication
+- [agentchattr — Local chat server for AI agent coordination](https://github.com/bcurts/agentchattr)
+- [AI Maestro — Multi-agent orchestration with AMP protocol](https://github.com/23blocks-OS/ai-maestro)
 
 ### Skills Ecosystem (General)
 - [OpenClaw Skills Guide (DigitalOcean)](https://www.digitalocean.com/resources/articles/what-are-openclaw-skills)
