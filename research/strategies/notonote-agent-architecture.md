@@ -11,9 +11,13 @@
 
 **Use Pi Mono as the agent base.** It's embeddable (SDK/RPC mode), lightweight, and supports the same SKILL.md format as OpenClaw — meaning you get access to 13,700+ ClawHub skills without needing OpenClaw's heavy Gateway. Add MCP for Claude tools and external integrations. Noto becomes a thin orchestrator that delegates to skills and external agents while maintaining strict context control.
 
-**Why not OpenClaw directly?** Its Plugin SDK requires the full Gateway running (~200-300MB idle per instance). At 1,000 users, that's 200-300GB of RAM just for gateways. Pi Mono's SDK mode embeds into your own process — you control the footprint.
+**Critical finding:** OpenClaw's core agent engine IS Pi Mono. Pi is literally the brain underneath OpenClaw's Gateway. Using Pi Mono directly means you get the same agent engine without the Gateway overhead.
+
+**Why not OpenClaw directly?** Its Plugin SDK requires the full Gateway running (~200-300MB idle per instance). At 1,000 users, that's 200-300GB of RAM just for gateways. The codebase is 400K LOC with a code quality audit score of 15/100 for documentation and $373K estimated tech debt. Pi Mono's SDK mode embeds into your own process — you control the footprint.
 
 **Why not build from scratch?** Pi Mono's unified LLM API, tool-calling harness, and extension system would take months to rebuild. It's 20.9k stars, MIT licensed, actively maintained with 3,131 commits.
+
+**Project stability note:** Peter Steinberger (OpenClaw creator) joined OpenAI; OpenClaw is moving to a foundation. Pi Mono (by Mario Zechner/badlogic) remains independently maintained.
 
 ---
 
@@ -23,15 +27,16 @@
 
 | Aspect | Assessment |
 |--------|------------|
-| **Stars/Activity** | 196,000+ stars, 600+ contributors, massively active |
+| **Stars/Activity** | 200,000+ stars, 600+ contributors, fastest-growing GitHub repo ever |
+| **Creator** | Peter Steinberger (PSPDFKit founder) — now at OpenAI; project moving to foundation |
 | **Language** | TypeScript (Node.js >= 22), pnpm monorepo, tsdown bundler |
-| **Architecture** | Gateway-centric — the Gateway is an always-on control plane managing sessions, channels, tools, events. Binds port 18789. WebSocket + JSON frames, TypeBox schemas |
-| **Core size** | ~8MB after 2026 refactor, but the Gateway is the mandatory runtime |
-| **Skills** | SKILL.md with YAML frontmatter + markdown instructions. 13,729+ on ClawHub |
+| **Architecture** | Gateway-centric — always-on control plane. **Core agent engine is Pi Mono** (badlogic/pi-mono). Binds port 18789. WebSocket + JSON frames, TypeBox schemas |
+| **Codebase** | ~400,000 LOC. Code quality audit: 98% modern TS, but 15/100 documentation, $373K tech debt, 111 unsafe coding practices |
+| **Skills** | SKILL.md with YAML frontmatter + markdown instructions. 13,729+ on ClawHub. Injected into system prompt as compact XML (~24 tokens/skill) |
 | **Multi-tenant** | **Single-user by design.** Multi-tenant = separate containers per user. Idle: 200-300MB RAM, active: 400-600MB per instance |
 | **SDK/Embed** | Plugin SDK (`openclaw/plugin-sdk`) — but **requires Gateway running**. No standalone embed mode |
 | **Agent-to-Agent** | `acpx` — headless CLI client for Agent Client Protocol (ACP). Persistent sessions, multi-turn |
-| **LLM support** | Multi-provider via plugins (model providers are external packages loaded dynamically) |
+| **LLM support** | 12+ providers: OpenAI, Anthropic, Ollama, OpenRouter, Gemini, Vertex, Bedrock, xAI, Groq, Cerebras, Mistral, GitHub Copilot. Fallback chains supported |
 | **Security** | CVE-2026-25253 (CVSS 8.8, patched). ClawHavoc malware campaign. VirusTotal partnership for ClawHub scanning. 30,000+ publicly exposed instances found |
 | **License** | MIT |
 
