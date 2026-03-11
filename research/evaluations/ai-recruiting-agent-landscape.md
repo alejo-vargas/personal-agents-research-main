@@ -7,7 +7,7 @@
 
 ## TL;DR
 
-The recruiting AI agent space is mature commercially but thin on open-source. The dominant architecture is evolving from single-model RAG pipelines to **multi-agent systems** with specialized agents for parsing, matching, scoring, and outreach. For Lark/Feishu specifically, no dedicated recruiting agent exists, but the infrastructure is ready: **OpenClaw** supports multi-agent routing into Feishu group chats, **Mgrsc/lark_bot** supports MCP tool integration, and there is now an **official Lark OpenAPI MCP server**. The clearest path is: build a multi-agent recruiting system using CrewAI or LangGraph, expose it via MCP, and deploy it into Lark through OpenClaw or a custom Feishu bot.
+The recruiting AI agent space is mature commercially but thin on open-source. For Lark/Feishu specifically, no dedicated recruiting agent exists, but the infrastructure is ready: **Mgrsc/lark_bot** supports MCP tool integration, and there is now an **official Lark OpenAPI MCP server**. **Key insight for MVP:** candidates are already organized in Lark Docs with a structured folder per candidate (Documents, Summary, Submissions). This eliminates the need for a custom database, vector store, or embedding pipeline. The agent reads directly from Lark Docs via the Lark OpenAPI MCP, reasons over content with an LLM, and responds in Lark chat. No complex infrastructure needed — just Lark bot + LLM + Lark Docs API.
 
 ---
 
@@ -277,83 +277,125 @@ Sources:
 
 ---
 
-## 6. Recommended Architecture for a Lark-Based Recruiting Agent
+## 6. Existing Candidate Data Structure (Lark Docs)
 
-Based on this research, here is a viable architecture:
+**Critical context:** Candidates are already organized in Lark with a well-defined folder structure. Every candidate who has been worked on gets their own folder containing:
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                    LARK / FEISHU                      │
-│                                                      │
-│  Group Chat: #staffing-requests                      │
-│  ┌──────────────────────────────────────────┐        │
-│  │ Manager: "Need a senior React dev, 5+    │        │
-│  │ years, fintech experience, NYC preferred" │        │
-│  └──────────────────────────────────────────┘        │
-│           │ (event: im.message.receive_v1)           │
-└───────────┼──────────────────────────────────────────┘
-            ▼
-┌──────────────────────────────────────────────────────┐
-│              AGENT GATEWAY                            │
-│  (OpenClaw / custom Feishu bot / Mgrsc/lark_bot)     │
-│  - WebSocket connection to Lark                      │
-│  - @mention detection                                │
-│  - Thread-based responses                            │
-│  - Redis for conversation state                      │
-└───────────┼──────────────────────────────────────────┘
-            ▼
-┌──────────────────────────────────────────────────────┐
-│           MULTI-AGENT ORCHESTRATOR                    │
-│           (CrewAI / LangGraph)                        │
-│                                                      │
-│  Agent 1: JD Parser                                  │
-│    - LLM structured extraction of requirements       │
-│    - Output: structured JSON (skills, experience,    │
-│      location, nice-to-haves)                        │
-│                                                      │
-│  Agent 2: Candidate Searcher                         │
-│    - Query vector DB of candidate profiles           │
-│    - Hybrid: embedding similarity + keyword filters  │
-│    - MCP tools: query CRM, ATS, external sources     │
-│                                                      │
-│  Agent 3: Match Evaluator                            │
-│    - Score each candidate against structured JD      │
-│    - Explain match reasoning                         │
-│    - Flag gaps and risks                             │
-│                                                      │
-│  Agent 4: Presenter                                  │
-│    - Format top-N candidates as Lark card message    │
-│    - Include match score, key skills, gaps           │
-│    - Action buttons: "Schedule interview", "Pass"    │
-└───────────┼──────────────────────────────────────────┘
-            │
-            ▼ (via MCP)
-┌──────────────────────────────────────────────────────┐
-│              MCP TOOL SERVERS                         │
-│                                                      │
-│  - Candidate DB (custom MCP server over your data)   │
-│  - Lark OpenAPI MCP (for calendar, docs, messages)   │
-│  - Leonar MCP (if using Leonar as CRM)               │
-│  - HubSpot MCP (if using HubSpot as CRM)             │
-│  - Zapier MCP (for outreach, email, etc.)            │
-└──────────────────────────────────────────────────────┘
+[Candidate Name]/
+  Documents/       -- CV, deal sheet, transcripts, etc. (Lark Docs or uploads)
+  Summary          -- Single doc: latest status with firms, law firm bio link,
+                      LinkedIn link, general notes
+  Submissions      -- Single doc: all write-ups to law firms / other roles
+                      introduced to, history of all submissions
 ```
 
-### Build vs. Buy Decision
+**This changes the architecture fundamentally.** There is no need to:
+- Build a candidate database from scratch
+- Set up a vector store / ChromaDB / FAISS
+- Parse and ingest resumes into a custom system
+- Build complex embedding pipelines
 
-| Component | Build | Buy/Use |
-|-----------|-------|---------|
-| Lark bot gateway | Build (or use OpenClaw/lark_bot) | -- |
-| JD parsing | Build (LLM structured extraction) | -- |
-| Candidate DB + embeddings | Build (ChromaDB/Pinecone + embedding model) | -- |
-| Matching logic | Build (multi-agent with CrewAI/LangGraph) | -- |
-| CRM integration | -- | Leonar MCP / HubSpot MCP |
-| Candidate sourcing (external) | -- | Leonar (870M profiles) / Juicebox API |
-| Outreach automation | -- | Zapier MCP / Leonar outreach |
+The agent reads directly from Lark Docs via the Lark OpenAPI MCP server. The data is already curated, structured, and maintained by the team.
+
+---
+
+## 7. MVP Architecture: Lark-Native Recruiting Agent
+
+### Design Principle: Read Lark, Reason with LLM, Respond in Lark
+
+The MVP leverages the existing Lark Docs structure as the candidate "database." The agent reads candidate folders via the Lark OpenAPI, uses an LLM to reason over the content, and responds in Lark chat.
+
+```
+Lark Group Chat
+  User: @RecruitBot "We have a new M&A partner role at Kirkland.
+         Need laterals with 8+ years, top-10 law school, BigLaw M&A"
+         |
+         | (event: im.message.receive_v1)
+         v
+Agent Gateway (Mgrsc/lark_bot or custom Feishu bot)
+  - WebSocket connection to Lark
+  - @mention detection in group chats
+  - Thread-based responses
+         |
+         v
+Agent Core (single agent for MVP)
+  |
+  |-- Step 1: Parse Request
+  |     Extract role requirements from chat message
+  |     -> practice area, seniority, firm tier, education, location
+  |
+  |-- Step 2: Browse Candidate Folders (via Lark Docs API)
+  |     List all candidate folders
+  |     Read each candidate's Summary doc
+  |     Quick-scan for basic fit (practice area, seniority, status)
+  |
+  |-- Step 3: Deep Evaluate Shortlist
+  |     For candidates passing initial screen:
+  |     - Read full Summary (status, firms, notes)
+  |     - Read Submissions (past write-ups, positioning)
+  |     - Read Documents/CV if needed for detail
+  |     - Score and rank against requirements
+  |
+  |-- Step 4: Present Results
+  |     Format top candidates as Lark message/card
+  |     Include: match reasoning, status, availability, gaps
+  |     Flag: last submission date, active conversations
+  |     Link back to candidate folder in Lark
+  |
+  v (via MCP)
+MCP Tool Servers
+  - Lark OpenAPI MCP (docs, folders, chat)
+      List folders in candidate directory
+      Read document content (Summary, Submissions)
+      Download files (CVs, deal sheets)
+      Send messages / card messages in chat
+  - (Future: Bitable MCP for structured candidate index)
+```
+
+### MVP Capabilities
+
+| Capability | How It Works |
+|-----------|-------------|
+| **"Find candidates for role X"** | Parse requirements -> scan Summaries -> evaluate matches -> present shortlist |
+| **"What's the status on [Candidate]?"** | Read their Summary doc -> return current status with all firms |
+| **"Who have we submitted to [Firm]?"** | Scan Submissions docs across candidates -> list all with that firm |
+| **"Draft a write-up for [Candidate] to [Firm]"** | Read candidate's CV + Summary + past Submissions -> generate new write-up in their style |
+| **"Which candidates are available?"** | Scan Summaries for status indicators -> return available/open candidates |
+
+### What Makes This MVP Tractable
+
+1. **No database to build.** Lark Docs IS the database. The Lark OpenAPI MCP server can already list folders and read documents.
+2. **No embedding pipeline needed.** For a manageable number of active candidates (likely dozens to low hundreds), the agent can scan Summaries directly with the LLM. No vector search required at this scale.
+3. **Write-ups have precedent.** The Submissions folder contains examples of how candidates have been positioned before. The agent can learn the house style from existing write-ups.
+4. **Status is already tracked.** The Summary doc already has status with firms, so the agent doesn't need a separate state management system.
+
+### Build vs. Buy Decision (MVP)
+
+| Component | Approach | Notes |
+|-----------|----------|-------|
+| Lark bot gateway | Build on Mgrsc/lark_bot or custom | Use WebSocket, minimal setup |
+| Request parsing | LLM (Claude/GPT-4o) | Structured extraction from chat message |
+| Candidate data access | Lark OpenAPI MCP | Read folders, docs, files directly |
+| Matching logic | LLM reasoning over doc content | No embeddings needed at this scale |
+| Response formatting | Lark card messages | Rich format with links back to docs |
+| Candidate DB / vector store | **Not needed for MVP** | Lark Docs is the source of truth |
+| CRM integration | **Not needed for MVP** | Lark Docs already serves this role |
+| External sourcing | **Not needed for MVP** | Focus on existing candidates first |
+
+### Scaling Beyond MVP
+
+When the candidate pool grows beyond what the LLM can scan directly (hundreds -> thousands):
+
+1. **Add a Bitable index.** Create a Bitable table with candidate metadata (name, practice area, seniority, status, folder link). The agent queries Bitable first for filtering, then reads full docs only for shortlisted candidates.
+2. **Add embeddings.** Embed Summary docs into a vector store for semantic search. Only needed at scale.
+3. **Add external sourcing.** Integrate LinkedIn, Leonar, or other candidate databases for finding new candidates (not in the existing pool).
+4. **Multi-agent split.** Break the single agent into specialized agents (searcher, evaluator, writer) when complexity warrants it.
 
 ### Key Risks
 
-1. **Bias/discrimination liability** -- AI matching in hiring is a legal minefield. NYC already requires bias audits. Must have human-in-the-loop for all hiring decisions.
-2. **Data privacy** -- Candidate data is PII. Need encryption, access controls, retention policies, GDPR/CCPA compliance.
-3. **Matching accuracy** -- Pure embedding similarity misses nuance. Multi-agent with human review is essential.
-4. **Lark ecosystem limitations** -- Fewer third-party integrations than Slack. May need custom MCP servers for Lark-specific features.
+1. **Lark API rate limits.** Reading many candidate folders sequentially could be slow. Mitigate by: batching reads, caching recently-read Summaries, or maintaining a lightweight Bitable index.
+2. **Document format inconsistency.** If Summary/Submissions docs vary in structure across candidates, the LLM needs to handle different formats. Mitigate by: establishing a template, or relying on the LLM's flexibility with freeform text.
+3. **Bias/discrimination liability.** AI-assisted candidate matching in legal recruiting still carries legal risk. Must have human-in-the-loop for all decisions.
+4. **Confidentiality.** Candidate data is sensitive. The LLM provider sees candidate information. Mitigate by: using a self-hosted model, or ensuring the provider has appropriate data processing agreements.
+5. **Lark Docs API coverage.** Need to verify the Lark OpenAPI MCP server can actually read document content (not just metadata). May need a custom MCP server if the official one is limited.
